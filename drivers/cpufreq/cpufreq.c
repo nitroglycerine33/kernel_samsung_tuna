@@ -32,9 +32,6 @@
 
 #include <trace/events/power.h>
 
-// Safe boot speed
-#define SafeBootSpeed 1200000
-
 /**
  * The "cpufreq driver" - the arch- or hardware-dependent low
  * level driver of CPUFreq support, and its spinlock. This lock
@@ -945,9 +942,10 @@ static int cpufreq_add_dev(struct sys_device *sys_dev)
 		goto err_unlock_policy;
 	}
 
-    // Set max speed at boot to 1.2Mhz since is the safest speed to boot
-    if (policy->max > SafeBootSpeed)
-        policy->max = SafeBootSpeed;
+	if (policy->max > 1200000) {
+		pr_info("[imoseyon] cpufreq policy max set to 1.2Ghz at boot");
+		policy->max = 1200000;
+	}
 
 	policy->user_policy.min = policy->min;
 	policy->user_policy.max = policy->max;

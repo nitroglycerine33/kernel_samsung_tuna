@@ -64,6 +64,8 @@ struct sr_class1p5_work_data {
 	bool work_active;
 };
 
+extern bool enable_highvolt_sr;
+
 #if CONFIG_OMAP_SR_CLASS1P5_RECALIBRATION_DELAY
 /* recal_work:	recalibration calibration work */
 static struct delayed_work recal_work;
@@ -138,7 +140,7 @@ static void sr_class1p5_calib_work(struct work_struct *work)
 {
 	struct sr_class1p5_work_data *work_data =
 	    container_of(work, struct sr_class1p5_work_data, work.work);
-	unsigned long u_volt_safe = 0, u_volt_current = 0, u_volt_margin = 0;
+	unsigned long u_volt_safe = 0, u_volt_current = 0, u_volt_margin;
 	struct omap_volt_data *volt_data;
 	struct voltagedomain *voltdm;
 	int idx = 0;
@@ -260,6 +262,10 @@ stop_sampling:
 		if (work_data->u_volt_samples[idx] > u_volt_safe)
 			u_volt_safe = work_data->u_volt_samples[idx];
 	}
+	/* Use the nominal voltage as the safe voltage to recover bad osc */
+	if (u_volt_safe > volt_data->volt_nominal)
+		u_volt_safe = volt_data->volt_nominal;
+
 
 	/* Fall through to close up common stuff */
 done_calib:
@@ -285,16 +291,16 @@ done_calib:
 		} else {
 			u_volt_margin = volt_data->volt_margin;
 		}
-
-		u_volt_safe += u_volt_margin;
-	}
-
-	if (u_volt_safe > volt_data->volt_nominal) {
-		pr_warning("%s: %s Vsafe %ld > Vnom %d. %ld[%d] margin on"
-			"vnom %d curr_v=%ld\n", __func__, voltdm->name,
-			u_volt_safe, volt_data->volt_nominal, u_volt_margin,
-			volt_data->volt_margin, volt_data->volt_nominal,
-			u_volt_current);
+		/* Add margin IF we are lower than nominal */
+		if ((u_volt_safe + u_volt_margin) < volt_data->volt_nominal) {
+			u_volt_safe += u_volt_margin;
+		} else {
+			pr_err("%s: %s could not add %ld[%d] margin"
+				"to vnom %d curr_v=%ld\n",
+				__func__, voltdm->name, u_volt_margin,
+				volt_data->volt_margin, volt_data->volt_nominal,
+				u_volt_current);
+		}
 	}
 
 	volt_data->volt_calibrated = u_volt_safe;
@@ -416,6 +422,15 @@ static int sr_class1p5_enable(struct voltagedomain *voltdm,
 	/* If already calibrated, nothing to do here.. */
 	if (volt_data->volt_calibrated)
 		return 0;
+        // SR1.5 does not seem to calibrate high freqs properly - this is a
+        // workaround until I find a better way
+ 	if (!enable_highvolt_sr && volt_data->volt_nominal > 1310000) {
+		pr_info("[imoseyon] nominal@%d, skipping sr_enable\n", 
+			volt_data->volt_nominal);
+		volt_data->volt_calibrated = volt_data->volt_nominal;
+		volt_data->volt_dynamic_nominal = volt_data->volt_nominal;
+		return 0;
+	}
 
 	work_data = (struct sr_class1p5_work_data *)voltdm_cdata;
 	if (IS_ERR_OR_NULL(work_data)) {
